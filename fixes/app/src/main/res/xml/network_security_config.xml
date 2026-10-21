@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Mặc định chặn toàn bộ HTTP/WS không mã hoá -->
+    <base-config cleartextTrafficPermitted="false" />
+    <!-- Chỉ cho phép cleartext tới đúng Home Assistant trong LAN -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.1.10</domain>
+    </domain-config>
+</network-security-config>

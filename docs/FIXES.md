@@ -1,38 +1,18 @@
-# Hướng dẫn sửa 4 lỗi — Nhà Thông Minh
+# Sửa các lỗi đã phát hiện — Nhà Thông Minh
 
-Các lỗi dưới đây nằm ở **cấu hình build**, chỉ sửa được trong project nguồn (Android Studio/Gradle) rồi build lại — không vá trực tiếp trên file APK được (xem lý do ở cuối).
+Đã đối chiếu với mã nguồn thật tại `/workspace/hassnotifyfullscreen` (Gradle bản Groovy DSL). Các file **đã sửa sẵn** nằm trong thư mục [fixes/](../fixes/) của repo này — chỉ cần copy đè vào project (cách áp dụng ở [fixes/README.md](../fixes/README.md)).
 
-## Lỗi 1 + 3: debuggable, debug key, và PreviewActivity lọt vào build
+## 1. Thêm cấu hình ký bản release (lỗi 1 + 3)
 
-Cả ba cùng nằm trong `build.gradle.kts` của module app.
+Hiện tại `buildTypes.release` chưa có `signingConfig` nên APK release build ra sẽ không có chữ ký, không cài được.
 
-**a) Đưa thư viện tooling của Compose về đúng `debugImplementation`** (đây là nguyên nhân PreviewActivity xuất hiện trong app và bị exported):
-
-```kotlin
-dependencies {
-    // Xoá dòng implementation(...) của ui-tooling nếu đang có
-    debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-tooling-preview")
-}
-```
-
-**b) Chặn cứng trong `AndroidManifest.xml`** (phòng khi thư viện khác kéo tooling vào):
-
-```xml
-<activity
-    android:name="androidx.compose.ui.tooling.PreviewActivity"
-    tools:node="remove" />
-```
-
-(nhớ khai báo `xmlns:tools="http://schemas.android.com/tools"` ở thẻ `<manifest>` nếu chưa có.)
-
-**c) Tạo keystore riêng cho bản release** — chạy 1 lần trên máy của bạn, **giữ file này và mật khẩu cẩn thận, không commit lên Git**:
+**Bước 1 — tạo keystore** (chạy 1 lần trên máy của bạn; giữ file + mật khẩu cẩn thận, **không commit lên Git**):
 
 ```bash
 keytool -genkeypair -v -keystore nhathongminh-release.jks -alias nhathongminh -keyalg RSA -keysize 2048 -validity 10000
 ```
 
-Tạo file `keystore.properties` (cũng **không commit**, thêm vào `.gitignore`):
+**Bước 2 — tạo file `keystore.properties`** ở thư mục gốc project (thêm vào `.gitignore`, **không commit**):
 
 ```properties
 storeFile=../nhathongminh-release.jks
@@ -41,41 +21,44 @@ keyAlias=nhathongminh
 keyPassword=<mật khẩu của bạn>
 ```
 
-**d) Cấu hình bản release trong `build.gradle.kts`:**
+(đường dẫn `storeFile` tính tương đối từ thư mục `app/` — chỉnh lại nếu bạn để keystore chỗ khác.)
 
-```kotlin
-// Đọc keystore.properties ở đầu file
-val keystoreProperties = java.util.Properties().apply {
-    val f = rootProject.file("keystore.properties")
-    if (f.exists()) load(f.inputStream())
+**Bước 3 — `app/build.gradle`**: đọc `keystore.properties` và gắn signing config (đã có sẵn trong [fixes/app/build.gradle](../fixes/app/build.gradle)):
+
+```groovy
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
 android {
     signingConfigs {
-        create("release") {
-            storeFile = file(keystoreProperties["storeFile"] as String)
-            storePassword = keystoreProperties["storePassword"] as String
-            keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["keyPassword"] as String
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
         }
     }
     buildTypes {
         release {
-            isDebuggable = false
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig signingConfigs.release
+            // ...
         }
     }
 }
 ```
 
-Sau khi build release: bản mới **không cài đè** lên bản debug đang chạy (khác chữ ký) — gỡ bản debug trước khi cài bản release.
+Ghi chú:
+- Bản debug có `applicationIdSuffix = ".debug"` nên bản release (không hậu tố) sẽ cài **song song** như một app riêng — không cần gỡ bản debug, nhưng dữ liệu/cài đặt cũng không tự chuyển sang.
+- Bản release tự động có `debuggable=false`.
 
-## Lỗi 2: cleartext toàn cục → chỉ cho phép đúng IP của Home Assistant
+## 2. Giới hạn cleartext chỉ cho đúng IP Home Assistant (lỗi 2)
 
-Tạo file `app/src/main/res/xml/network_security_config.xml`:
+Tạo file mới `app/src/main/res/xml/network_security_config.xml` (đã có sẵn trong thư mục fixes):
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -87,7 +70,7 @@ Tạo file `app/src/main/res/xml/network_security_config.xml`:
 </network-security-config>
 ```
 
-Trong `AndroidManifest.xml`, ở thẻ `<application>`:
+Trong `AndroidManifest.xml`, thẻ `<application>` đổi thành:
 
 ```xml
 <application
@@ -96,26 +79,36 @@ Trong `AndroidManifest.xml`, ở thẻ `<application>`:
     ... >
 ```
 
-Kết quả: app chỉ còn nói HTTP/WS không mã hoá với đúng `192.168.1.10` (Home Assistant), mọi địa chỉ khác bắt buộc HTTPS. Nếu sau này đổi IP HA, sửa IP trong file này.
+Nếu sau này đổi địa chỉ Home Assistant, nhớ sửa IP trong file XML này — app sẽ chặn cleartext tới địa chỉ khác.
 
-## Lỗi 4: nâng targetSdk 34 → 35
+## 3. Nâng compileSdk / targetSdk 34 → 35 (lỗi 4)
 
-Trong `build.gradle.kts`:
+Trong `app/build.gradle`:
 
-```kotlin
+```groovy
 android {
     compileSdk = 35
     defaultConfig {
         targetSdk = 35
+        // ...
     }
 }
 ```
 
-Lưu ý khi nâng:
-- Android 14+ siết quyền `USE_FULL_SCREEN_INTENT`: app cài ngoài Play (sideload) vẫn cấp được qua phần cài đặt quyền của hệ thống — kiểm tra lại tính năng cảnh báo toàn màn hình sau khi nâng.
-- Quyền `POST_NOTIFICATIONS` đã khai báo sẵn nên không vướng.
-- Build xong nên kiểm thử lại: kết nối WebSocket tới HA, cảnh báo khi người về, tự chạy sau reboot.
+Thêm vào `gradle.properties` để tắt cảnh báo "AGP 8.5.2 chưa chính thức hỗ trợ compileSdk 35" (build vẫn chạy):
 
-## Vì sao không vá trực tiếp trên file APK?
+```properties
+android.suppressUnsupportedCompileSdk=35
+```
 
-Về kỹ thuật có thể giải nén APK, sửa manifest rồi đóng gói lại, nhưng bản vá sẽ: (1) phải ký bằng một key lạ — không cài đè được lên bản hiện tại và lệch hẳn khỏi project nguồn; (2) không sửa được lỗi nằm trong cấu hình Gradle (nguồn gốc của PreviewActivity và debug flag); (3) mỗi lần build bản mới từ nguồn, lỗi lại quay lại. Sửa ở project nguồn là cách duy nhất dứt điểm.
+Điều kiện: máy build phải có **Android SDK Platform 35** (cài qua SDK Manager hoặc `sdkmanager "platforms;android-35"`).
+
+Kiểm thử lại sau khi nâng: kết nối WebSocket tới HA, thông báo, cảnh báo toàn màn hình (`USE_FULL_SCREEN_INTENT` bị Android 14+ siết — app sideload cấp quyền này trong phần cài đặt hệ thống), tự chạy sau reboot.
+
+## 4. PreviewActivity — không cần sửa
+
+`androidx.compose.ui:ui-tooling` đã ở đúng `debugImplementation` trong project. `PreviewActivity` chỉ có mặt trong bản debug (đúng thiết kế Compose tooling) và tự biến mất ở bản release. Mục này từng bị báo nhầm ở bước kiểm tra chỉ dựa trên APK — đã đính chính trong [ERROR-CHECK.md](ERROR-CHECK.md).
+
+## Tuỳ chọn nâng cao (không bắt buộc): bật minify cho bản release
+
+Đổi trong `buildTypes.release`: `minifyEnabled = true` và thêm `shrinkResources = true`. Các thư viện đang dùng (Compose, OkHttp, coroutines, security-crypto) đều có sẵn consumer ProGuard rules nên thường không cần thêm rule thủ công — nhưng **phải test kỹ** bản release sau khi bật (đặc biệt là WebSocket và các luồng đọc JSON) trước khi dùng chính thức.
